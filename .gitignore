@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/jobs.db
+data/resume.txt
+logs/*.log
+.DS_Store
+*.egg-info/
+
+# Personal data overrides — never commit these (see *_example / *_local pattern in README)
+apply/applicant_profile_local.py
+config/candidate_profile_local.py

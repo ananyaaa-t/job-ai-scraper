@@ -1,0 +1,24 @@
+Your Name
+City, ST | you@example.com | 555-555-5555
+GitHub: yourusername | Portfolio: yourportfolio.example.com | LinkedIn: linkedin.com/in/yourusername/
+
+EDUCATION
+University Name — Graduated Month Year
+Degree, Major. GPA: X.X/4.0
+
+SKILLS
+Languages: ...
+Frameworks & Tools: ...
+
+WORK EXPERIENCE
+Company | Title — Start Date - End Date
+- Bullet describing an outcome you drove, with a quantified impact where possible.
+- Another bullet.
+
+PROJECTS
+Project Name | Tech stack
+- What you built and why it mattered.
+
+LEADERSHIP
+Organization | Role — Date range
+- Impact/scale of the leadership role.
