@@ -44,6 +44,12 @@ SENIORITY_EXCLUDE_KEYWORDS = [
     "senior", "staff", "principal", "lead ", "manager", "director", "architect",
 ]
 
+# --- Years-of-experience cap ---
+# Postings that explicitly require more than this many years of experience are
+# excluded before they ever reach the LLM (see evaluator/fit_llm.py). Set to
+# None to disable this filter entirely.
+MAX_YEARS_EXPERIENCE = 2
+
 # --- Location preferences (used for ranking/boosting, never a hard filter) ---
 LOCATION_BOOST = {
     "seattle": 15,

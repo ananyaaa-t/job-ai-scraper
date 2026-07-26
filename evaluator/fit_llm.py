@@ -17,7 +17,8 @@ import logging
 from google import genai
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from config.settings import CANDIDATE_PROFILE, GEMINI_API_KEY, RESUME_PATH
+from config.settings import CANDIDATE_PROFILE, GEMINI_API_KEY, MAX_YEARS_EXPERIENCE, RESUME_PATH
+from evaluator.experience_filter import exceeds_max_years, extract_min_years_required
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +41,15 @@ Description:
 {description}
 
 ## Task
-Evaluate how strong a fit this posting is for the candidate. Respond with ONLY a
-JSON object (no markdown fences, no extra text) with exactly these keys:
+Evaluate how strong a fit this posting is for the candidate. IMPORTANT: this
+candidate is early-career and is NOT a fit for any posting that requires more
+than {max_years} years of professional experience — whether stated explicitly
+(e.g. "3+ years", "5-7 years of experience") or implied by the seniority of
+the role. If the posting requires more than {max_years} years of experience,
+you MUST cap fit_score at 10 or below and say so in the reasoning, regardless
+of how well the rest of the posting otherwise matches.
+
+Respond with ONLY a JSON object (no markdown fences, no extra text) with exactly these keys:
 {{
   "fit_score": <integer 0-100>,
   "reasoning": "<2-3 sentence explanation of the score, referencing specific resume/profile details>",
@@ -89,13 +97,31 @@ def evaluate_fit(posting: dict) -> dict:
     posting: normalized dict with keys title, company, location, description.
     Returns dict: fit_score, reasoning, tailored_bullets (list[str]), cover_letter_opening.
     """
+    title = posting.get("title", "")
+    description = posting.get("description") or ""
+    combined_text = f"{title}\n{description}"
+
+    # Hard pre-filter: skip the LLM call entirely for postings that explicitly
+    # require more than MAX_YEARS_EXPERIENCE years — deterministic, cheap, and
+    # never overridden by the LLM's own judgment call.
+    if exceeds_max_years(combined_text, MAX_YEARS_EXPERIENCE):
+        required = extract_min_years_required(combined_text)
+        logger.info(
+            "Skipping '%s @ %s': requires %s+ years experience (max allowed: %s)",
+            title, posting.get("company"), required, MAX_YEARS_EXPERIENCE,
+        )
+        return _fallback_result(
+            f"requires {required}+ years of experience, exceeds the {MAX_YEARS_EXPERIENCE}-year max"
+        )
+
     prompt = PROMPT_TEMPLATE.format(
         profile=CANDIDATE_PROFILE,
         resume=_load_resume(),
-        title=posting.get("title", ""),
+        title=title,
         company=posting.get("company", ""),
         location=posting.get("location", ""),
-        description=(posting.get("description") or "")[:6000],  # keep prompt reasonably sized
+        description=description[:6000],  # keep prompt reasonably sized
+        max_years=MAX_YEARS_EXPERIENCE,
     )
     try:
         raw_text = _call_gemini(prompt)
