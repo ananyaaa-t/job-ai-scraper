@@ -1,20 +1,17 @@
 # Job AI Scraper
 
-Daily job-search assistant: scrapes Priority 0 companies (Google, Apple,
-Microsoft, Notion, Stripe), Tier 2 companies (Airbnb, Figma, Pinterest,
-Vercel, Slack, Cursor, Perplexity, Cognition), and general startup sources
-(YC/Work at a Startup, Wellfound, LinkedIn best-effort), scores fit against
-your resume with Gemini, semi-automates application form pre-fill, and
-emails you a daily digest via Gmail.
+A script that scrapes job postings from a set of companies I care about
+(Google, Apple, Microsoft, Notion, Stripe, plus a "tier 2" list of Airbnb,
+Figma, Pinterest, Vercel, Slack, Cursor, Perplexity, Cognition) as well as
+general startup boards (YC, Wellfound, LinkedIn), runs each posting through
+Gemini to score how well it fits my resume/background, and emails me a
+digest every morning. For the strongest matches it'll also pre-fill the
+application form in a browser window so I just have to review and hit
+submit myself.
 
-**Safety guarantee:** application forms are pre-filled only — the tool never
-clicks submit. You always review and submit manually.
+It doesn't submit anything on its own — that part's always manual.
 
-**Privacy by design:** all personal data (resume, contact info, career
-profile) lives in gitignored local files, never committed. The repo only
-ever contains generic placeholder templates — see step 3 below.
-
-## 1. Setup
+## Setup
 
 ```bash
 cd ~/job-ai-scraper
@@ -24,53 +21,39 @@ pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
-## 2. Configure secrets
+Copy `.env.example` to `.env` and fill in:
+- `GEMINI_API_KEY` — free tier key, get one at https://aistudio.google.com/apikey
+- `GMAIL_ADDRESS` / `GMAIL_APP_PASSWORD` — the Gmail account sending the digest.
+  Use an [App Password](https://myaccount.google.com/apppasswords), not your real password.
+- `DIGEST_RECIPIENT` — where the digest gets sent
 
-```bash
-cp .env.example .env
-```
+## Your resume / info
 
-Then edit `.env`:
-- `GEMINI_API_KEY` — free tier key from https://aistudio.google.com/apikey
-- `GMAIL_ADDRESS` — the Gmail account that will send the digest
-- `GMAIL_APP_PASSWORD` — a 16-character [App Password](https://myaccount.google.com/apppasswords)
-  (requires 2FA enabled on the Google account; do NOT use your normal password)
-- `DIGEST_RECIPIENT` — the email address that should receive the daily digest
+None of this stuff is checked into the repo — I kept my actual resume and
+contact info in a few gitignored files instead:
 
-`.env` is gitignored and never committed.
+- `data/resume.txt` — your resume as plain text (there's a `resume.example.txt` for format reference)
+- `config/candidate_profile_local.py` — set `CANDIDATE_PROFILE = "..."` with your background, target roles, location prefs, whatever you want the LLM to know when judging fit
+- `apply/applicant_profile_local.py` — name/email/phone/links used to pre-fill application forms
 
-## 3. Add your personal data (gitignored, never committed)
+If those files aren't there it just falls back to placeholder values, so
+the repo is safe to clone/fork without pulling in anyone's personal info.
 
-Three pieces of personal data are excluded from git via generic-default +
-local-override files. To use your own:
-
-| What | Generic template (committed) | Your real data (gitignored, create it) |
-|---|---|---|
-| Resume text fed to the LLM | `data/resume.example.txt` | `data/resume.txt` |
-| Career profile/preferences fed to the LLM | built into `config/settings.py` | `config/candidate_profile_local.py` (define `CANDIDATE_PROFILE = "..."`) |
-| Application form contact info | built into `apply/applicant_profile.py` | `apply/applicant_profile_local.py` (define `FULL_NAME`, `EMAIL`, `PHONE`, etc.) |
-
-If the `_local`/real files don't exist, the app runs fine with the generic
-placeholders (useful for anyone forking this as a reusable tool).
-
-## 4. Run manually
+## Running it
 
 ```bash
 source .venv/bin/activate
 python orchestrator.py
 ```
 
-Logs are written to `logs/orchestrator.log` and also printed to stdout.
-The SQLite dedup DB lives at `data/jobs.db` (gitignored).
+Logs go to `logs/orchestrator.log`, and the dedup DB is a plain SQLite file
+at `data/jobs.db` so you never get emailed about the same posting twice.
 
-## 5. Schedule it daily (macOS)
+To run it every morning, I set it up as a launchd job (cron on Mac has
+issues launching a real browser window for the Playwright part):
 
-macOS's cron is often blocked by System Integrity Protection for launching
-GUI browser processes (needed for Playwright pre-fill), so `launchd` is more
-reliable than crontab on Mac. Example `launchd` plist:
-
-`~/Library/LaunchAgents/com.ananya.jobscraper.plist`:
 ```xml
+<!-- ~/Library/LaunchAgents/com.ananya.jobscraper.plist -->
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -92,55 +75,47 @@ reliable than crontab on Mac. Example `launchd` plist:
 </dict>
 </plist>
 ```
-Load it with: `launchctl load ~/Library/LaunchAgents/com.ananya.jobscraper.plist`
 
-Alternatively, a plain crontab entry works fine if you disable/adjust the
-Playwright pre-fill step (or run headless) since cron sessions have no GUI:
+```
+launchctl load ~/Library/LaunchAgents/com.ananya.jobscraper.plist
+```
+
+A regular crontab line works too, as long as you're okay with the
+application pre-fill step not popping up a window (cron has no GUI):
+
 ```
 0 7 * * * cd /Users/ananyathapar/job-ai-scraper && .venv/bin/python orchestrator.py >> logs/cron.log 2>&1
 ```
 
-## Architecture
+## How it's put together
 
 ```
-job-ai-scraper/
-├── config/settings.py     # companies, role keywords, thresholds, candidate profile
-├── scrapers/               # one module per source, all implement Scraper.fetch()
-│   ├── base.py             # shared HTTP helpers + role/seniority keyword filter
-│   ├── company_pages.py    # Greenhouse API + generic HTML scraping for named companies
-│   ├── ashby.py            # Ashby public API (Cursor, Perplexity, Cognition, ...)
-│   ├── yc_startups.py, wellfound.py, linkedin.py
-├── normalize.py            # raw postings -> common schema + location boost
-├── storage/db.py           # SQLite dedup + status tracking
-├── evaluator/fit_llm.py    # Gemini fit scoring + tailored bullets + cover letter draft
-├── apply/                  # Greenhouse/Lever/Workday form pre-fill (never submits)
-├── email_digest/digest.py  # HTML digest builder + Gmail SMTP sender
-└── orchestrator.py         # daily pipeline entry point
+config/settings.py     -> companies, role keywords, thresholds
+scrapers/               -> one file per source (Greenhouse, Ashby, YC, Wellfound, LinkedIn, plain HTML)
+normalize.py            -> turns whatever a scraper returns into one common shape
+storage/db.py           -> SQLite, just for dedup + status tracking
+evaluator/fit_llm.py    -> sends each posting + resume to Gemini, gets back a score + tailored bullets
+apply/                  -> Playwright adapters that pre-fill Greenhouse/Lever forms
+email_digest/digest.py  -> builds the HTML email and sends it through Gmail
+orchestrator.py         -> the script that ties it all together, run daily
 ```
 
-## Company sources
+## Where jobs come from
 
-| Tier | Companies | Board type |
-|---|---|---|
-| Priority 0 | Google, Apple, Microsoft | Custom HTML scrape |
-| Priority 0 | Notion, Stripe | Greenhouse API |
-| Tier 2 | Airbnb, Figma, Pinterest, Vercel | Greenhouse API |
-| Tier 2 | Slack | Custom HTML scrape |
-| Tier 2 | Cursor, Perplexity, Cognition | Ashby API |
-| Startups (general) | YC/Work at a Startup, Wellfound, LinkedIn (best-effort) | scraped broadly by role keyword |
+- Google, Apple, Microsoft — scraped straight off their careers pages (no public API, so this is the most fragile part and might need fixing if a site redesign breaks it)
+- Notion, Stripe, Airbnb, Figma, Pinterest, Vercel — Greenhouse's public API
+- Slack — careers page scrape, same as Google/Apple/Microsoft
+- Cursor, Perplexity, Cognition — these all run on Ashby, which also has a public API
+- YC/Work at a Startup, Wellfound, LinkedIn — broader startup search, not tied to a specific company list
 
-Add more companies by adding an entry to `PRIORITY_0_COMPANIES` or
-`TIER_2_COMPANIES` in `config/settings.py` — Greenhouse and Ashby entries
-just need a `board_token`; anything else falls back to the generic HTML
-scraper via a `careers_url`.
+Adding a new company is usually a one-line addition to `PRIORITY_0_COMPANIES`
+or `TIER_2_COMPANIES` in `config/settings.py` if they're on Greenhouse or
+Ashby. Anything else needs a `careers_url` and falls back to generic HTML
+scraping, which is less reliable.
 
-## Known limitations (by design, see plan)
-- **LinkedIn** scraping is best-effort/ToS-sensitive and may break or return
-  nothing at any time — treat it as a bonus source, not a dependency.
-- **Google/Apple/Microsoft/Slack** career pages are scraped via HTML
-  heuristics (no public JSON API); may need selector updates if results come
-  back empty.
-- **Workday** postings are opened for manual application but not auto-filled
-  — field structure varies too much per company tenant to do safely.
-- Resume **file upload** in application forms is always manual (OS-native
-  file dialogs aren't automated).
+## Stuff that's not perfect
+
+- LinkedIn scraping can just stop working at any time — it's unauthenticated and LinkedIn doesn't want you doing this, so I treat it as a bonus, not something to depend on.
+- The Google/Apple/Microsoft/Slack scrapers are HTML heuristics against pages that aren't meant to be scraped, so they'll need occasional fixes.
+- Workday-hosted postings just get opened in a browser tab for you to fill out by hand — every company's Workday form is different enough that auto-filling it reliably wasn't worth the risk of it going wrong silently.
+- You still have to manually attach your resume file in any pre-filled form — file upload dialogs are OS-level and not something I bothered automating for a personal tool.
